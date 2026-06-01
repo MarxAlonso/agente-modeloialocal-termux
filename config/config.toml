@@ -29,3 +29,5 @@ base_path = "./agente"
 max_logs = 100
 # Intervalo de auto-guardado en segundos
 save_interval = 300
+# Habilitar auto-guardado de información importante
+auto_save = true

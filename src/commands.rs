@@ -186,14 +186,58 @@ impl CommandProcessor {
             .map(|cap| cap[1].to_string())
     }
 
-    /// Detectar creación de conocimiento
-    pub fn detect_knowledge_creation(&self, text: &str) -> Option<(String, String)> {
-        let re = Regex::new(r"crea.*conocimiento\s+(\w+)\s+(\w+)").unwrap();
-        re.captures(&text.to_lowercase()).map(|cap| {
-            (cap[1].to_string(), cap[2].to_string())
-        })
+    /// Detectar información importante automáticamente
+    pub fn detect_auto_save_content(&self, text: &str) -> Option<String> {
+        let text_lower = text.to_lowercase();
+        
+        // Patrones para información valiosa
+        let patterns = [
+            // Información personal
+            (r"(?i)(me llamo|mi nombre es|soy|nombre:\s*)([^.,\n]+)", "Información personal: "),
+            // Habilidades
+            (r"(?i)(sé de|conozco|domino|especialista en)([^.,\n]+)", "Habilidad: "),
+            // Proyectos
+            (r"(?i)(estoy (trabajando|desarrollando) en|proyecto de)([^.,\n]+)", "Proyecto: "),
+            // URLs y referencias
+            (r"(https?://[^\s]+)", "Referencia: "),
+            // Decisiones importantes
+            (r"(?i)(decidí|voy a|planeo|plan)([^.,\n]+)", "Plan/Decisión: "),
+        ];
+        
+        for (pattern, prefix) in &patterns {
+            if let Ok(re) = Regex::new(pattern) {
+                if let Some(cap) = re.captures(text) {
+                    let content = if cap.len() > 2 {
+                        cap[2].trim().to_string()
+                    } else {
+                        cap[0].to_string()
+                    };
+                    
+                    if !content.is_empty() && content.len() > 3 {
+                        return Some(format!("{}{}", prefix, content));
+                    }
+                }
+            }
+        }
+        
+        None
     }
-}
+
+    /// Detectar si hay información valiosa que guardar automáticamente
+    pub async fn auto_save_if_needed(&self, text: &str) -> Result<Option<String>> {
+        // No guardar si es muy corto o es un comando
+        if text.len() < 10 || text.starts_with('/') || text.starts_with('!') {
+            return Ok(None);
+        }
+        
+        // Detectar patrones de información importante
+        if let Some(content) = self.detect_auto_save_content(text) {
+            self.memory.save(&content).await?;
+            return Ok(Some(format!("💾 Auto-guardado: {}", content)));
+        }
+        
+        Ok(None)
+    }
 
 #[cfg(test)]
 mod tests {

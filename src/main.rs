@@ -1,21 +1,23 @@
 /// Agente Autónomo Local para Ollama en Rust
 /// Sistema inteligente con memoria, skills y RAG para Termux/Linux
+/// Interfaz mejorada con guardado automático de memoria
 mod commands;
 mod filesystem;
 mod memory;
 mod ollama;
 mod rag;
 mod skills;
+mod ui;
 
 use anyhow::Result;
-
+use chrono::Local;
 use commands::CommandProcessor;
 use filesystem::FileSystemManager;
 use memory::MemoryManager;
 use ollama::OllamaClient;
 use rag::RAGEngine;
 use skills::SkillsManager;
-use std::io::{self, Write};
+use ui::TerminalUI;
 use toml::Table;
 
 /// Configuración del agente
@@ -23,9 +25,9 @@ struct Config {
     ollama_url: String,
     ollama_model: String,
     ollama_timeout: u64,
-    #[allow(dead_code)]
     memory_limit: usize,
     enable_rag: bool,
+    enable_auto_save: bool,
 }
 
 impl Config {
@@ -39,7 +41,7 @@ impl Config {
         let table: Table = config_str.parse()?;
 
         let ollama = table.get("ollama").and_then(|t| t.as_table()).unwrap();
-        let _system = table.get("system").and_then(|t| t.as_table()).unwrap();
+        let system = table.get("system").and_then(|t| t.as_table()).ok();
 
         Ok(Self {
             ollama_url: ollama
@@ -66,6 +68,9 @@ impl Config {
                 .and_then(|t| t.as_table())
                 .and_then(|r| r.get("enable").and_then(|v| v.as_bool()))
                 .unwrap_or(true),
+            enable_auto_save: system
+                .and_then(|s| s.get("auto_save").and_then(|v| v.as_bool()))
+                .unwrap_or(true),
         })
     }
 }
@@ -89,6 +94,7 @@ relevance_threshold = 0.3
 base_path = "./agente"
 max_logs = 100
 save_interval = 300
+auto_save = true
 "#;
 
 /// Estructura principal del agente
@@ -100,6 +106,7 @@ struct Agent {
     rag: RAGEngine,
     fs: FileSystemManager,
     commands: CommandProcessor,
+    ui: TerminalUI,
 }
 
 impl Agent {
@@ -113,6 +120,7 @@ impl Agent {
         let rag = RAGEngine::new("./agente");
         let fs = FileSystemManager::new("./agente");
         let commands = CommandProcessor::new("./agente");
+        let ui = TerminalUI::new();
 
         Ok(Self {
             config,
@@ -122,34 +130,34 @@ impl Agent {
             rag,
             fs,
             commands,
+            ui,
         })
     }
 
     /// Inicializar estructura del agente
     async fn init(&self) -> Result<()> {
-        println!("🚀 Inicializando Agente...");
+        self.ui.show_header("🤖 Agente Ollama Local - Inicialización");
         
+        self.ui.show_loading("Inicializando memoria");
         self.memory.init().await?;
-        println!("✓ Memoria inicializada");
         
+        self.ui.show_loading("Inicializando skills");
         self.skills.init().await?;
-        println!("✓ Skills inicializados");
         
+        self.ui.show_loading("Inicializando RAG");
         self.rag.init().await?;
-        println!("✓ RAG inicializado");
         
-        println!("✅ Agente listo\n");
+        self.ui.show_success("Sistema listo para usar");
         Ok(())
     }
 
     /// Verificar disponibilidad de Ollama
     async fn check_ollama(&self) -> Result<()> {
-        print!("🔌 Verificando Ollama... ");
-        io::stdout().flush()?;
+        self.ui.show_loading("Verificando conexión con Ollama");
         
         match self.ollama.health_check().await {
             Ok(true) => {
-                println!("✓ Conectado");
+                self.ui.show_success("Conexión con Ollama establecida");
                 Ok(())
             }
             Ok(false) => Err(anyhow::anyhow!(
@@ -161,16 +169,35 @@ impl Agent {
 
     /// Mostrar información del agente
     fn show_info(&self) {
-        println!("╔════════════════════════════════════════╗");
-        println!("║   Agente Autónomo Local para Ollama   ║");
-        println!("║           v0.1.0 - Termux             ║");
-        println!("╚════════════════════════════════════════╝");
-        println!("\n📋 Configuración:");
-        println!("  • Modelo: {}", self.config.ollama_model);
-        println!("  • URL: {}", self.config.ollama_url);
-        println!("  • RAG: {}", if self.config.enable_rag { "Activado" } else { "Desactivado" });
-        println!("\n📝 Escribe /ayuda para ver comandos disponibles");
-        println!("📝 Escribe 'salir' para terminar\n");
+        self.ui.show_header("🤖 Agente Autónomo Local para Ollama");
+        
+        self.ui.show_info_panel(
+            "Información del Sistema",
+            &format!(
+                "Modelo: {}\nURL Ollama: {}\nRAG: {}\nAuto-guardado: {}\n\n\
+                 Escribe /ayuda para ver comandos disponibles\n\
+                 Escribe 'salir' para terminar",
+                self.config.ollama_model,
+                self.config.ollama_url,
+                if self.config.enable_rag { "✓ Activado" } else { "✗ Desactivado" },
+                if self.config.enable_auto_save { "✓ Activado" } else { "✗ Desactivado" }
+            ),
+        );
+    }
+
+    /// Mostrar contexto activo
+    async fn show_context(&self) -> Result<()> {
+        let memory_size = self.memory.get_size().await.unwrap_or(0);
+        let skills = self.skills.list_skills().await.unwrap_or_default();
+        let docs = self.rag.list_knowledge("proyectos").await.unwrap_or_default();
+
+        self.ui.show_context_info(
+            memory_size as usize,
+            skills.len(),
+            docs.len(),
+        );
+
+        Ok(())
     }
 
     /// Construir prompt con contexto
@@ -208,6 +235,13 @@ impl Agent {
 
     /// Procesar entrada del usuario
     async fn process_input(&self, input: &str) -> Result<String> {
+        // Auto-guardar información importante automáticamente (sin necesidad de comando)
+        if self.config.enable_auto_save {
+            if let Ok(Some(save_msg)) = self.commands.auto_save_if_needed(input).await {
+                self.ui.show_success(&save_msg.replace("💾 Auto-guardado: ", ""));
+            }
+        }
+
         // Detectar intenciones especiales
         if self.commands.detect_memory_intent(input) {
             self.memory.save(input).await?;
@@ -250,25 +284,31 @@ impl Agent {
         self.show_info();
 
         loop {
-            print!("📌 > ");
-            io::stdout().flush()?;
+            let _ = self.show_context().await;
+            
+            match self.ui.read_input("Esperando entrada") {
+                Ok(input) => {
+                    if input.is_empty() {
+                        continue;
+                    }
 
-            let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
-            let input = input.trim();
+                    if input.to_lowercase() == "salir" {
+                        self.ui.show_info("👋 ¡Hasta luego!");
+                        break;
+                    }
 
-            if input.is_empty() {
-                continue;
-            }
-
-            if input.to_lowercase() == "salir" {
-                println!("\n👋 ¡Hasta luego!");
-                break;
-            }
-
-            match self.process_input(input).await {
-                Ok(response) => println!("\n🤖 {}\n", response),
-                Err(e) => println!("\n❌ Error: {}\n", e),
+                    match self.process_input(&input).await {
+                        Ok(response) => {
+                            self.ui.show_response(&response);
+                        }
+                        Err(e) => {
+                            self.ui.show_error(&format!("{}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.ui.show_error(&format!("Error leyendo entrada: {}", e));
+                }
             }
         }
 
@@ -288,7 +328,7 @@ async fn main() -> Result<()> {
     
     // Verificar Ollama
     if let Err(e) = agent.check_ollama().await {
-        eprintln!("⚠️  Advertencia: {}", e);
+        agent.ui.show_error(&format!("⚠️  Advertencia: {}", e));
         eprintln!("\nPara usar el agente necesitas Ollama. Instrucciones:");
         eprintln!("  Linux: https://ollama.ai");
         eprintln!("  Termux Android:");

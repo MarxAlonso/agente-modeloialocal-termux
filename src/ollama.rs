@@ -117,6 +117,7 @@ impl OllamaClient {
         }
     }
 
+    #[allow(dead_code)]
     /// Listar modelos disponibles
     pub async fn list_models(&self) -> Result<Vec<String>> {
         let url = format!("{}/api/tags", self.url);

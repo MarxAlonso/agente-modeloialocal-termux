@@ -3,6 +3,8 @@
 use anyhow::Result;
 use chrono::Local;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::future::Future;
 use tokio::fs;
 
 /// Gestor del sistema de archivos
@@ -85,7 +87,7 @@ impl FileSystemManager {
     }
 
     /// Exportar backup
-    pub async fn export_backup(&self, backup_name: &str) -> Result<()> {
+    pub async fn export_backup(&self, _backup_name: &str) -> Result<()> {
         let timestamp = Local::now().format("%Y%m%d_%H%M%S");
         let backup_dir = format!("backups/backup_{}", timestamp);
 
@@ -142,21 +144,27 @@ impl FileSystemManager {
     }
 
     /// Helper recursivo para calcular tamaño
-    async fn sum_dir_size(&self, path: &PathBuf, total: &mut u64) -> Result<()> {
-        let mut dir = fs::read_dir(path).await?;
+    fn sum_dir_size<'a>(
+        &'a self,
+        path: &'a PathBuf,
+        total: &'a mut u64,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        Box::pin(async move {
+            let mut dir = fs::read_dir(path).await?;
 
-        while let Some(entry) = dir.next_entry().await? {
-            let path = entry.path();
-            if path.is_file() {
-                if let Ok(metadata) = fs::metadata(&path).await {
-                    *total += metadata.len();
+            while let Some(entry) = dir.next_entry().await? {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Ok(metadata) = fs::metadata(&path).await {
+                        *total += metadata.len();
+                    }
+                } else if path.is_dir() {
+                    self.sum_dir_size(&path, total).await?;
                 }
-            } else if path.is_dir() {
-                self.sum_dir_size(&path, total).await?;
             }
-        }
 
-        Ok(())
+            Ok(())
+        })
     }
 }
 

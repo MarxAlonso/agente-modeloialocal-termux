@@ -3,7 +3,8 @@
 use anyhow::Result;
 use regex::Regex;
 use std::path::PathBuf;
-use std::collections::HashMap;
+use std::pin::Pin;
+use std::future::Future;
 use tokio::fs;
 
 /// Documento recuperado
@@ -16,7 +17,6 @@ pub struct Document {
 
 /// Motor RAG para recuperación local
 pub struct RAGEngine {
-    base_path: PathBuf,
     knowledge_dir: PathBuf,
 }
 
@@ -27,7 +27,6 @@ impl RAGEngine {
         let knowledge_dir = base.join("conocimiento");
         
         Self {
-            base_path: base,
             knowledge_dir,
         }
     }
@@ -63,38 +62,39 @@ impl RAGEngine {
     }
 
     /// Buscar recursivamente en directorio
-    async fn search_directory(
-        &self,
-        dir: &PathBuf,
-        keywords: &[String],
-        documents: &mut Vec<Document>,
-    ) -> Result<()> {
-        if !dir.exists() {
-            return Ok(());
-        }
+    fn search_directory<'a>(
+        &'a self,
+        dir: &'a PathBuf,
+        keywords: &'a [String],
+        documents: &'a mut Vec<Document>,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + 'a>> {
+        Box::pin(async move {
+            if !dir.exists() {
+                return Ok(());
+            }
 
-        let mut entries = fs::read_dir(dir).await?;
+            let mut entries = fs::read_dir(dir).await?;
 
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            
-            if path.is_dir() {
-                self.search_directory(&path, keywords, documents).await?;
-            } else if path.extension().map_or(false, |ext| ext == "md") {
-                if let Ok(content) = fs::read_to_string(&path).await {
-                    // Verificar si contiene palabras clave
-                    if keywords.iter().any(|kw| content.to_lowercase().contains(&kw.to_lowercase())) {
-                        documents.push(Document {
-                            path: path.to_string_lossy().to_string(),
-                            content,
-                            relevance: 0.0,
-                        });
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+
+                if path.is_dir() {
+                    self.search_directory(&path, keywords, documents).await?;
+                } else if path.extension().map_or(false, |ext| ext == "md") {
+                    if let Ok(content) = fs::read_to_string(&path).await {
+                        if keywords.iter().any(|kw| content.to_lowercase().contains(&kw.to_lowercase())) {
+                            documents.push(Document {
+                                path: path.to_string_lossy().to_string(),
+                                content,
+                                relevance: 0.0,
+                            });
+                        }
                     }
                 }
             }
-        }
 
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Extraer palabras clave de la consulta
@@ -108,15 +108,15 @@ impl RAGEngine {
 
     /// Calcular relevancia de un documento
     fn calculate_relevance(&self, query: &str, content: &str) -> f32 {
-        let query_lower = query.to_lowercase();
+        let _query_lower = query.to_lowercase();
         let content_lower = content.to_lowercase();
 
         let mut score = 0.0f32;
         let keywords = self.extract_keywords(query);
 
         // Contar coincidencias de palabras clave
-        for keyword in keywords {
-            let count = content_lower.matches(&keyword).count() as f32;
+        for keyword in &keywords {
+            let count = content_lower.matches(keyword).count() as f32;
             score += count * 0.5;
         }
 
@@ -131,6 +131,7 @@ impl RAGEngine {
         (score / 100.0).min(1.0)
     }
 
+    #[allow(dead_code)]
     /// Detectar enlaces bidireccionales [[referencia]]
     pub fn extract_links(&self, content: &str) -> Vec<String> {
         let re = Regex::new(r"\[\[([^\]]+)\]\]").unwrap();

@@ -46,6 +46,7 @@ impl SkillsManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     /// Agregar contenido a un skill
     pub async fn add_to_skill(&self, skill_name: &str, content: &str) -> Result<()> {
         let path = self.skills_dir.join(format!("{}.md", skill_name));
@@ -90,6 +91,7 @@ impl SkillsManager {
         Ok(fs::read_to_string(&path).await.unwrap_or_default())
     }
 
+    #[allow(dead_code)]
     /// Verificar si skill existe
     pub async fn skill_exists(&self, skill_name: &str) -> bool {
         let path = self.skills_dir.join(format!("{}.md", skill_name));

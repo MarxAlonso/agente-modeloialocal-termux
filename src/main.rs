@@ -8,7 +8,7 @@ mod rag;
 mod skills;
 
 use anyhow::Result;
-use chrono::Local;
+
 use commands::CommandProcessor;
 use filesystem::FileSystemManager;
 use memory::MemoryManager;
@@ -23,6 +23,7 @@ struct Config {
     ollama_url: String,
     ollama_model: String,
     ollama_timeout: u64,
+    #[allow(dead_code)]
     memory_limit: usize,
     enable_rag: bool,
 }
@@ -38,7 +39,7 @@ impl Config {
         let table: Table = config_str.parse()?;
 
         let ollama = table.get("ollama").and_then(|t| t.as_table()).unwrap();
-        let system = table.get("system").and_then(|t| t.as_table()).unwrap();
+        let _system = table.get("system").and_then(|t| t.as_table()).unwrap();
 
         Ok(Self {
             ollama_url: ollama

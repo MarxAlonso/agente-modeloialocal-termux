@@ -2,7 +2,7 @@
 /// Implementa el sistema de comandos del agente
 use crate::{
     filesystem::FileSystemManager, memory::MemoryManager, skills::SkillsManager,
-    rag::RAGEngine, ollama::OllamaClient,
+    rag::RAGEngine,
 };
 use anyhow::Result;
 use regex::Regex;

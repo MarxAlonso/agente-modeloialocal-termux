@@ -1,0 +1,39 @@
+# .gitignore para Proyecto Rust
+
+# Rust
+/target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Archivos del agente (ignorar datos generados)
+agente/logs/
+agente/backups/
+agente/conocimiento/proyectos/*
+agente/conocimiento/personas/*
+agente/conocimiento/ideas/*
+agente/conocimiento/investigaciones/*
+
+# Excepto estructura base
+!agente/conocimiento/.gitkeep
+!agente/conocimiento/proyectos/.gitkeep
+!agente/conocimiento/personas/.gitkeep
+!agente/conocimiento/ideas/.gitkeep
+!agente/conocimiento/investigaciones/.gitkeep
+
+# Archivos temporales
+*.tmp
+*.bak
+*.log
+
+# Node modules si existe
+node_modules/
+package-lock.json

@@ -1,0 +1,31 @@
+# Configuración del Agente Ollama
+
+[ollama]
+# URL del servidor Ollama
+url = "http://localhost:11434"
+# Modelo por defecto
+model = "qwen2.5:1.5b"
+# Timeout en segundos
+timeout = 300
+
+[memory]
+# Límite de caracteres en memoria
+limit = 20000
+# Auto-guardar cambios
+auto_save = true
+
+[rag]
+# Habilitar Motor RAG
+enable = true
+# Número máximo de documentos a incluir
+max_docs = 5
+# Umbral de relevancia (0.0 - 1.0)
+relevance_threshold = 0.3
+
+[system]
+# Directorio base
+base_path = "./agente"
+# Número máximo de logs a mantener
+max_logs = 100
+# Intervalo de auto-guardado en segundos
+save_interval = 300

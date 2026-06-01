@@ -16,6 +16,7 @@ pub enum CommandType {
     Buscar,
     Stats,
     Exportar,
+    Script,
     Ayuda,
     Desconocido,
 }
@@ -61,6 +62,8 @@ impl CommandProcessor {
             CommandType::Stats
         } else if input.starts_with("/exportar") {
             CommandType::Exportar
+        } else if input.starts_with("/script") || input.starts_with("/ejecutar") {
+            CommandType::Script
         } else if input.starts_with("/ayuda") {
             CommandType::Ayuda
         } else {
@@ -88,6 +91,7 @@ impl CommandProcessor {
             }
             CommandType::Stats => self.cmd_stats().await,
             CommandType::Exportar => self.cmd_exportar().await,
+            CommandType::Script => self.cmd_script(&cmd.args).await,
             CommandType::Ayuda => Ok(self.cmd_ayuda()),
             CommandType::Desconocido => Ok("Comando desconocido. Escribe /ayuda para ver opciones.".to_string()),
         }
@@ -161,15 +165,66 @@ impl CommandProcessor {
         Ok("💾 Backup exportado correctamente".to_string())
     }
 
+    async fn cmd_script(&self, args: &[String]) -> Result<String> {
+        if args.is_empty() {
+            let ts_skills = self.skills.list_ts_skills().await?;
+            if ts_skills.is_empty() {
+                return Ok("📜 No hay skills TypeScript disponibles. Crea un archivo .ts en skills/".to_string());
+            }
+            let mut msg = "📜 Skills TypeScript disponibles:\n\n".to_string();
+            for s in &ts_skills {
+                let source = self.skills.read_ts_source(s).await.unwrap_or_default();
+                let desc = source.lines()
+                    .find(|l| l.starts_with("// desc:"))
+                    .map(|l| l.trim_start_matches("// desc:").trim())
+                    .unwrap_or("Sin descripción");
+                msg.push_str(&format!("  /script {} — {}\n", s, desc));
+            }
+            msg.push_str("\nUsa: /script <skill> [argumentos...]");
+            return Ok(msg);
+        }
+
+        let skill_name = &args[0];
+        if !self.skills.ts_skill_exists(skill_name).await {
+            return Ok(format!(
+                "❌ Skill '{}' no encontrado. Skills disponibles:\n{}",
+                skill_name,
+                self.skills.list_ts_skills().await?
+                    .iter()
+                    .map(|s| format!("  /script {}", s))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ));
+        }
+
+        let input = if args.len() > 1 {
+            args[1..].join(" ")
+        } else {
+            String::new()
+        };
+
+        match self.skills.run_ts_skill(skill_name, &input).await {
+            Ok(output) => {
+                if output.trim().is_empty() {
+                    Ok(format!("✓ Skill '{}' ejecutado (sin output)", skill_name))
+                } else {
+                    Ok(output.trim().to_string())
+                }
+            }
+            Err(e) => Ok(format!("❌ Error: {}", e)),
+        }
+    }
+
     fn cmd_ayuda(&self) -> String {
         "🆘 Comandos disponibles:\n\n\
-         /memoria     - Mostrar memoria\n\
-         /skills      - Listar skills\n\
+         /memoria      - Mostrar memoria\n\
+         /skills       - Listar skills\n\
          /conocimiento - Listar conocimientos\n\
          /buscar TEXTO - Buscar en conocimiento\n\
-         /stats       - Mostrar estadísticas\n\
-         /exportar    - Exportar backup\n\
-         /ayuda       - Mostrar esta ayuda"
+         /script NOMBRE - Ejecutar skill TypeScript via Deno\n\
+         /stats        - Mostrar estadísticas\n\
+         /exportar     - Exportar backup\n\
+         /ayuda        - Mostrar esta ayuda"
             .to_string()
     }
 
@@ -186,9 +241,22 @@ impl CommandProcessor {
             .map(|cap| cap[1].to_string())
     }
 
+    /// Detectar creación de conocimiento
+    pub fn detect_knowledge_creation(&self, text: &str) -> Option<(String, String)> {
+        let text_lower = text.to_lowercase();
+        let re = Regex::new(
+            r"(?i)crea\s+conocimiento\s+(?:llamado|llamada|sobre)\s+(\w+)\s+(?:en|de|en\s+la\s+categoría)\s+(\w+)"
+        ).unwrap();
+        if let Some(cap) = re.captures(&text_lower) {
+            Some((cap[2].to_string(), cap[1].to_string()))
+        } else {
+            None
+        }
+    }
+
     /// Detectar información importante automáticamente
     pub fn detect_auto_save_content(&self, text: &str) -> Option<String> {
-        let text_lower = text.to_lowercase();
+        let _text_lower = text.to_lowercase();
         
         // Patrones para información valiosa
         let patterns = [
@@ -238,6 +306,7 @@ impl CommandProcessor {
         
         Ok(None)
     }
+}
 
 #[cfg(test)]
 mod tests {
@@ -254,7 +323,7 @@ mod tests {
     fn test_detect_memory_intent() {
         let processor = CommandProcessor::new("./agente");
         assert!(processor.detect_memory_intent("guarda esto en memoria"));
-        assert!(processor.detect_memory_intent("recuerda mi nombre"));
+        assert!(processor.detect_memory_intent("recuerda mi nombre en memoria"));
     }
 
     #[test]

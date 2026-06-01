@@ -10,7 +10,7 @@ mod skills;
 mod ui;
 
 use anyhow::Result;
-use chrono::Local;
+use colored::Colorize;
 use commands::CommandProcessor;
 use filesystem::FileSystemManager;
 use memory::MemoryManager;
@@ -25,7 +25,8 @@ struct Config {
     ollama_url: String,
     ollama_model: String,
     ollama_timeout: u64,
-    memory_limit: usize,
+    #[allow(dead_code)]
+    _memory_limit: usize,
     enable_rag: bool,
     enable_auto_save: bool,
 }
@@ -41,7 +42,7 @@ impl Config {
         let table: Table = config_str.parse()?;
 
         let ollama = table.get("ollama").and_then(|t| t.as_table()).unwrap();
-        let system = table.get("system").and_then(|t| t.as_table()).ok();
+        let system = table.get("system").and_then(|t| t.as_table());
 
         Ok(Self {
             ollama_url: ollama
@@ -58,7 +59,7 @@ impl Config {
                 .get("timeout")
                 .and_then(|v| v.as_integer())
                 .unwrap_or(300) as u64,
-            memory_limit: table
+            _memory_limit: table
                 .get("memory")
                 .and_then(|t| t.as_table())
                 .and_then(|m| m.get("limit").and_then(|v| v.as_integer()))
@@ -138,32 +139,36 @@ impl Agent {
     async fn init(&self) -> Result<()> {
         self.ui.show_header("🤖 Agente Ollama Local - Inicialización");
         
-        self.ui.show_loading("Inicializando memoria");
+        let spinner = self.ui.start_loading("Inicializando memoria");
         self.memory.init().await?;
+        spinner.done();
         
-        self.ui.show_loading("Inicializando skills");
+        let spinner = self.ui.start_loading("Inicializando skills");
         self.skills.init().await?;
+        spinner.done();
         
-        self.ui.show_loading("Inicializando RAG");
+        let spinner = self.ui.start_loading("Inicializando RAG");
         self.rag.init().await?;
+        spinner.done();
         
-        self.ui.show_success("Sistema listo para usar");
+        println!();
         Ok(())
     }
 
     /// Verificar disponibilidad de Ollama
     async fn check_ollama(&self) -> Result<()> {
-        self.ui.show_loading("Verificando conexión con Ollama");
+        let spinner = self.ui.start_loading("Verificando conexión con Ollama");
+        let ok = self.ollama.health_check().await?;
+        spinner.done();
         
-        match self.ollama.health_check().await {
-            Ok(true) => {
-                self.ui.show_success("Conexión con Ollama establecida");
+        match ok {
+            true => {
+                println!(" {} {}", "●".bright_green().bold(), "Ollama conectado".bright_green());
                 Ok(())
             }
-            Ok(false) => Err(anyhow::anyhow!(
+            false => Err(anyhow::anyhow!(
                 "Ollama no responde. Asegúrate de que Ollama está corriendo: ollama serve"
             )),
-            Err(e) => Err(anyhow::anyhow!("Error verificando Ollama: {}", e)),
         }
     }
 

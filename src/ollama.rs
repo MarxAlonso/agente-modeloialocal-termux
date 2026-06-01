@@ -4,6 +4,7 @@ use anyhow::{anyhow, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tokio::time::sleep;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OllamaRequest {
@@ -45,8 +46,32 @@ impl OllamaClient {
         }
     }
 
-    /// Generar respuesta desde Ollama
+    /// Generar respuesta desde Ollama con reintentos automáticos
     pub async fn generate(&self, model: &str, prompt: &str) -> Result<String> {
+        let max_retries = 3;
+        let mut last_error = anyhow!("Unknown error");
+
+        for attempt in 0..max_retries {
+            match self.generate_inner(model, prompt).await {
+                Ok(response) => return Ok(response),
+                Err(e) => {
+                    last_error = e;
+                    if attempt < max_retries - 1 {
+                        let wait = Duration::from_secs(2u64.pow(attempt));
+                        sleep(wait).await;
+                    }
+                }
+            }
+        }
+
+        Err(anyhow!(
+            "Ollama no responde después de {} intentos. Último error: {}",
+            max_retries,
+            last_error
+        ))
+    }
+
+    async fn generate_inner(&self, model: &str, prompt: &str) -> Result<String> {
         let request = OllamaRequest {
             model: model.to_string(),
             prompt: prompt.to_string(),
@@ -56,7 +81,7 @@ impl OllamaClient {
         };
 
         let url = format!("{}/api/generate", self.url);
-        
+
         let response = self
             .client
             .post(&url)
@@ -76,21 +101,17 @@ impl OllamaClient {
             .await
             .map_err(|e| anyhow!("Error leyendo respuesta: {}", e))?;
 
-        // Procesar líneas de respuesta (streaming)
         let mut full_response = String::new();
         for line in body.lines() {
             if line.trim().is_empty() {
                 continue;
             }
-            
+
             match serde_json::from_str::<OllamaResponse>(line) {
                 Ok(chunk) => {
                     full_response.push_str(&chunk.response);
                 }
-                Err(_) => {
-                    // Log silencioso de errores de parsing
-                    continue;
-                }
+                Err(_) => continue,
             }
         }
 
